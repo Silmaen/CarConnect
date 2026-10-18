@@ -16,6 +16,7 @@ class BleTransport(Transport):
     """
 
     CHUNK = 20  # MTU BLE par défaut moins l'en-tête
+    SETTLE_DELAY = 0.5  # secondes d'attente après l'abonnement aux notifications
 
     def __init__(self, address: str, connect_timeout: float = 15.0) -> None:
         self._address = address
@@ -79,6 +80,9 @@ class BleTransport(Transport):
         self._client = client
         notify, self._write_char = self._pick(client.services)
         await client.start_notify(notify, lambda _char, data: self._rx.put(bytes(data)))
+        await asyncio.sleep(self.SETTLE_DELAY)  # certains adaptateurs ignorent ce qu'on écrit juste après la connexion
+        while not self._rx.empty():
+            self._rx.get_nowait()
 
     async def _write(self, data: bytes) -> None:
         assert self._client is not None and self._write_char is not None

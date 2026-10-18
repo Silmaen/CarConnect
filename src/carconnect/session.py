@@ -1,13 +1,18 @@
+import logging
 import queue
 import threading
 from collections.abc import Callable
 
-from carconnect.elm327 import Elm327, Elm327Error, NoDataError
+from carconnect.elm327 import Elm327, Elm327Error, Elm327Timeout, NoDataError
 from carconnect.obd import PIDS, ObdClient
 from carconnect.transport import Transport
 
+log = logging.getLogger(__name__)
+
 # Lus à chaque cycle ; les autres PIDs supportés le sont un par cycle, en rotation.
 POLLED_PIDS = (0x0C, 0x0D, 0x05, 0x11, 0x04, 0x42)
+# Erreurs de bus consécutives (hors absence de donnée) tolérées avant de fermer la connexion
+MAX_TRANSIENT_ERRORS = 2
 
 
 class Session:
@@ -57,35 +62,61 @@ class Session:
             fast = [pid for pid in POLLED_PIDS if pid in supported] or list(POLLED_PIDS)
             slow = [pid for pid in supported if pid not in fast]
             turn = 0
+            transient = 0
             while not self._stop.is_set():
                 self._drain_jobs(obd)
                 pids = list(fast)
                 if slow:
                     pids.append(slow[turn % len(slow)])
                     turn += 1
-                sample: dict[str, float] = {}
-                for pid in pids:
-                    try:
-                        sample[PIDS[pid].key] = obd.read(pid)
-                    except NoDataError:
-                        pass
+                try:
+                    sample = self._poll(obd, pids)
+                except Elm327Timeout:
+                    raise  # l'adaptateur ne répond plus : liaison perdue
+                except Elm327Error as exc:
+                    transient += 1
+                    if transient > MAX_TRANSIENT_ERRORS:
+                        raise
+                    log.warning("erreur de bus transitoire (%d) : %s", transient, exc)
+                    elm.restore_obd()
+                    continue
+                transient = 0
                 self._on_sample(sample)
                 self._stop.wait(0.05)
         except Exception as exc:
+            if not self._stop.is_set():
+                log.exception("session interrompue")
+                note = getattr(self._transport, "note", None)  # journal des échanges, s'il est actif
+                if note:
+                    note(f"session interrompue : {exc!r}")
             self._on_error(str(exc) or type(exc).__name__)
         finally:
             self._transport.close()
+
+    def _poll(self, obd: ObdClient, pids: list[int]) -> dict[str, float]:
+        sample: dict[str, float] = {}
+        for pid in pids:
+            try:
+                sample[PIDS[pid].key] = obd.read(pid)
+            except NoDataError:
+                pass
+        return sample
 
     def _discover(self, obd: ObdClient) -> tuple[list[int], dict]:
         supported = sorted(pid for pid in obd.supported_pids() if pid in PIDS)
         info: dict = {
             "pids": [{"key": PIDS[p].key, "name": PIDS[p].name, "unit": PIDS[p].unit} for p in supported],
             "vin": "",
+            "protocol": "",
             "mil": False,
             "dtcCount": 0,
         }
         try:
             info["vin"] = obd.vin()
+        except Elm327Error:
+            pass
+        try:
+            info["protocol"] = obd.elm.protocol()
         except Elm327Error:
             pass
         try:

@@ -62,3 +62,22 @@ def test_dtcs_read_and_clear(elm):
     obd.clear_dtcs()
     assert obd.read_dtcs() == []
     assert obd.read_dtcs("pending") == []
+
+
+def test_readiness(elm):
+    by_name = {m.name: m.complete for m in ObdClient(elm).readiness()}
+    assert by_name["Catalyseur"] is True
+    assert by_name["Système EVAP"] is False
+
+
+def test_freeze_frame(elm):
+    frame = ObdClient(elm).freeze_frame()
+    assert frame.dtc == "P0133"
+    assert frame.values[0x0C] == pytest.approx(2100)
+    assert frame.values[0x05] == 85
+
+
+def test_no_freeze_frame_without_dtc(elm):
+    obd = ObdClient(elm)
+    obd.clear_dtcs()
+    assert obd.freeze_frame() is None
