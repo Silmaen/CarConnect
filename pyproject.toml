@@ -1,0 +1,28 @@
+[project]
+name = "carconnect"
+version = "0.1.0"
+description = "Diagnostic automobile via adaptateur OBD-II ELM327 (Bluetooth)"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "PySide6>=6.7",
+    "pyserial>=3.5",
+    "bleak>=0.22",
+]
+
+[project.scripts]
+carconnect = "carconnect.__main__:main"
+
+[tool.poetry]
+packages = [{ include = "carconnect", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8"
+pyinstaller = ">=6"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
